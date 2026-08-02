@@ -13,9 +13,9 @@ export default function Sidebar({ activeTab, setActiveTab }) {
     <div className="sidebar">
       <div className="sidebar-logo">
         <Shield size={24} fill="var(--color-blue-light)" />
-        <span>ThreatShield</span>
+        <span>CyberShield</span>
       </div>
-      
+
       <nav className="sidebar-nav">
         {menuItems.map((item) => {
           const Icon = item.icon;
@@ -35,14 +35,14 @@ export default function Sidebar({ activeTab, setActiveTab }) {
           );
         })}
       </nav>
-      
+
       <div className="sidebar-footer">
         <div className="sidebar-footer-title">System Health</div>
         <div className="sidebar-footer-status">
           <span className="pulse-dot pulse-dot-active"></span>
           <span>SOC Engine: Active</span>
         </div>
-        <div className="sidebar-footer-version">v2.4.0-stable</div>
+        <div className="sidebar-footer-version">prototype-v2.4</div>
       </div>
     </div>
   );

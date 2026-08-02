@@ -1,0 +1,11 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	x509
+#open	2026-08-02-13-03-44
+#fields	ts	fingerprint	certificate.version	certificate.serial	certificate.subject	certificate.issuer	certificate.not_valid_before	certificate.not_valid_after	certificate.key_alg	certificate.sig_alg	certificate.key_type	certificate.key_length	certificate.exponent	certificate.curve	san.dns	san.uri	san.email	san.ip	basic_constraints.ca	basic_constraints.path_len	host_cert	client_cert
+#types	time	string	count	string	string	string	time	time	string	string	string	count	string	string	vector[string]	vector[string]	vector[string]	vector[addr]	bool	count	bool	bool
+1785656024.324294	345472e19d31e0ca850e6b66b5ae9ad16926067aab655ec97d1733661f7dd856	3	A8D2400991B9695E13951FD6D5A5613F	CN=npmjs.org	CN=WE1,O=Google Trust Services,C=US	1782411542.000000	1790191130.000000	id-ecPublicKey	ecdsa-with-SHA256	ecdsa	256	-	prime256v1	npmjs.org,*.npmjs.org	-	-	-	F	-	T	F
+1785656024.324294	1dfc1605fbad358d8bc844f76d15203fac9ca5c1a79fd4857ffaf2864fbebf96	3	7FF31977972C224A76155D13B6D685E3	CN=WE1,O=Google Trust Services,C=US	CN=GTS Root R4,O=Google Trust Services LLC,C=US	1702458000.000000	1866290400.000000	id-ecPublicKey	ecdsa-with-SHA384	ecdsa	256	-	prime256v1	-	-	-	-	T	0	F	F
+1785656024.324294	76b27b80a58027dc3cf1da68dac17010ed93997d0b603e2fadbe85012493b5a7	3	7FE530BF331343BEDD821610493D8A1B	CN=GTS Root R4,O=Google Trust Services LLC,C=US	CN=GlobalSign Root CA,OU=Root CA,O=GlobalSign nv-sa,C=BE	1700019801.000000	1832630442.000000	id-ecPublicKey	sha256WithRSAEncryption	ecdsa	384	-	secp384r1	-	-	-	-	T	-	F	F

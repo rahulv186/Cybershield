@@ -1,0 +1,11 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	reporter
+#open	2026-08-02-13-03-14
+#fields	ts	level	message	location
+#types	time	enum	string	string
+1785655989.377662	Reporter::INFO	received termination signal	(empty)
+1785655989.377662	Reporter::INFO	62 packets received on interface en0, 0 (0.00%) dropped, 0 (0.00%) not processed	(empty)
+#close	2026-08-02-13-03-14

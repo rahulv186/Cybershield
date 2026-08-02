@@ -172,7 +172,7 @@ export default function App() {
                   icon={ShieldCheck}
                   color="green"
                   value={statsError ? 'Error' : systemStatus}
-                  label="System Status"
+                  label="Engine Status"
                   subtext={statsError ? 'backend unavailable' : 'soc engine online'}
                 />
                 <MetricCard
