@@ -4,5 +4,6 @@
         "signum",
         "zeek",
         "Zeek"
-    ]
+    ],
+    "workbench.iconTheme": "symbols"
 }

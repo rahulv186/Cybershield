@@ -4,7 +4,7 @@
     <content url="file://$MODULE_DIR$/../Detector_Engine">
       <excludeFolder url="file://$MODULE_DIR$/../Detector_Engine/.venv" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.14 (Detector_Engine)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.14 (i-am-building-a-cybersecurity-hackathon)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">

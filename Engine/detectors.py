@@ -89,7 +89,7 @@ def detect_ddos(record):
         ddos_score = min(100, 70 + ((current_count - 20)/20) * 30)
         return {
             "attack_type": "DDoS Attack",
-            "severity": "HIGH",
+            "severity": "CRITICAL",
             "detectedAt": format_epoch(ts),
             "source_ip": src_ip,
             "destination_ip": record.get("dst_ip", "Multiple"),
@@ -130,7 +130,7 @@ def detect_port_scan(record):
         port_score = min(100, 70+ ((unique_count-config.PORTSCAN_THRESHOLD)/config.PORTSCAN_THRESHOLD )* 100)
         return {
             "attack_type": "Port Scan",
-            "severity": "HIGH",
+            "severity": "CRITICAL",
             "detectedAt": format_epoch(ts),
             "source_ip": src_ip,
             "destination_ip": record.get("dst_ip", "Multiple"),
