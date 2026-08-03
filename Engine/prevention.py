@@ -10,7 +10,7 @@ import utils
 blocked_ips = set()
 import requests
 
-BACKEND_URL = "http://192.168.137.242:5050"
+BACKEND_URL = "http://localhost:5050"
 
 
 def upload_blocked_ip(ip, reason):

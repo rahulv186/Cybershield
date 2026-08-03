@@ -17,14 +17,6 @@ CyberShield detects:
 - Connection Floods
 - IP Spoofing Heuristics
 
-## 🏗️ Tech Stack
-
-- **Network Monitoring:** Zeek
-- **Detection Engine:** Python
-- **Log Monitoring:** Watchdog
-- **Backend:** Node.js + Express
-- **Database:** MongoDB Atlas
-- **Frontend:** React
 
 ## ⚙️ How It Works
 
