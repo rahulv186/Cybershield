@@ -6,7 +6,7 @@ It monitors Zeek network logs, detects suspicious network activity, generates th
 
 ## 🚨 Threat Detection
 
-CyberShield detects:
+CyberShield detects
 
 - DDoS Attacks
 - Port Scanning
