@@ -18,16 +18,43 @@ export default function ThreatTrendChart() {
 
     async function loadTrendData() {
       try {
-        setIsLoading(true);
         const threats = await getThreats();
         if (!isMounted) return;
 
         const threatList = Array.isArray(threats) ? threats : [];
-        
-        // Group by timestamp and count threats
-        const grouped = threatList.reduce((acc, threat) => {
-          const key = threat.detectedAt || 'Unknown';
-          acc[key] = (acc[key] || 0) + 1;
+
+        // Filter threats based on viewType
+        const now = new Date();
+        const filteredThreats = threatList.filter(threat => {
+          const detectedAt = new Date(threat.detectedAt || 0);
+          if (isNaN(detectedAt)) return false;
+
+          if (viewType === '24h') {
+            return (now - detectedAt) <= 24 * 60 * 60 * 1000;
+          } else {
+            return (now - detectedAt) <= 7 * 24 * 60 * 60 * 1000;
+          }
+        });
+
+        // Group by time bucket
+        const grouped = filteredThreats.reduce((acc, threat) => {
+          const date = new Date(threat.detectedAt || 0);
+          if (isNaN(date)) return acc;
+
+          let bucket;
+          if (viewType === '24h') {
+            // Bucket by hour
+            const hour = new Date(date);
+            hour.setMinutes(0, 0, 0);
+            bucket = hour.toISOString();
+          } else {
+            // Bucket by day
+            const day = new Date(date);
+            day.setHours(0, 0, 0, 0);
+            bucket = day.toISOString();
+          }
+
+          acc[bucket] = (acc[bucket] || 0) + 1;
           return acc;
         }, {});
 
@@ -35,10 +62,7 @@ export default function ThreatTrendChart() {
           .map(([label, value]) => ({ label, value }))
           .sort((a, b) => new Date(a.label) - new Date(b.label));
 
-        // Keep only the latest 75 points for live monitoring
-        const trimmedData = mapped.slice(-75);
-        
-        setTrendData(trimmedData.length > 0 ? trimmedData : []);
+        setTrendData(mapped);
         setError(null);
       } catch (err) {
         if (!isMounted) return;
@@ -50,14 +74,13 @@ export default function ThreatTrendChart() {
 
     loadTrendData();
 
-    // Poll every 5 seconds (keeping existing polling mechanism)
     pollInterval = setInterval(loadTrendData, 5000);
 
     return () => {
       isMounted = false;
       clearInterval(pollInterval);
     };
-  }, []);
+  }, [viewType]);
 
   // Calculate dynamic Y-axis scaling
   const { maxVal, yTicks, latestThreatCount, peakThreatCount } = useMemo(() => {

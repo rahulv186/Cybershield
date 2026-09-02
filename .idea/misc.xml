@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.14 (Detector_Engine)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.14 (Detector_Engine)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" languageLevel="JDK_26" project-jdk-name="~/.pyenv/versions/3.12.13/bin/python3.12" project-jdk-type="Python SDK" />
 </project>

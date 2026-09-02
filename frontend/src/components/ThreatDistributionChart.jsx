@@ -23,12 +23,28 @@ export default function ThreatDistributionChart() {
           return acc;
         }, {});
 
-        const nextCategories = Object.entries(grouped).slice(0, 5).map(([name, count], index) => ({
+        const rawDist = Object.entries(grouped).slice(0, 5).map(([name, count]) => ({
           name,
-          value: Math.max(5, Math.round((count / Math.max(1, threatList.length)) * 100)),
-          color: ['#2563eb', '#06b6d4', '#1e293b', '#f59e0b', '#fb923c'][index] || '#2563eb',
-          label: `${name} (${Math.max(5, Math.round((count / Math.max(1, threats.length)) * 100))}%)`
+          rawCount: count
         }));
+
+        const totalCount = rawDist.reduce((sum, cat) => sum + cat.rawCount, 0);
+        const totalRawPercent = rawDist.reduce((sum, cat) => sum + Math.max(5, Math.round((cat.rawCount / Math.max(1, threatList.length)) * 100)), 0);
+
+        const nextCategories = rawDist.map((cat, index) => {
+          const rawPercent = Math.max(5, Math.round((cat.rawCount / Math.max(1, threatList.length)) * 100));
+          // Normalize to ensure total is 100%
+          const normalizedValue = totalRawPercent > 100
+            ? Math.round((rawPercent / totalRawPercent) * 100)
+            : rawPercent;
+
+          return {
+            name: cat.name,
+            value: normalizedValue,
+            color: ['#2563eb', '#06b6d4', '#1e293b', '#f59e0b', '#fb923c'][index] || '#2563eb',
+            label: `${cat.name} (${normalizedValue}%)`
+          };
+        });
 
         setCategories(nextCategories);
         setError(null);
