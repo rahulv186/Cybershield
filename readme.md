@@ -12,7 +12,6 @@ It monitors network traffic through Zeek, watches the generated logs in real tim
 - [Threat Detection](#-threat-detection)
 - [Architecture](#-architecture)
 - [Tech Stack](#-tech-stack)
-- [Project Structure](#-project-structure)
 - [Prerequisites](#-prerequisites)
 - [Setup](#-setup)
   - [1. Backend (Node.js / Express)](#1-backend-nodejs--express)
@@ -23,7 +22,6 @@ It monitors network traffic through Zeek, watches the generated logs in real tim
 - [Testing the Detection Engine](#-testing-the-detection-engine)
 - [API Endpoints](#-api-endpoints)
 - [Configuration](#-configuration)
-- [Disclaimer](#-disclaimer)
 
 ---
 
@@ -58,26 +56,6 @@ Detection thresholds (window sizes, connection counts, byte limits, etc.) are fu
 
 ## 🏗️ Architecture
 
-```text
-Network Traffic
-      ↓
-     Zeek ──────────────► Log/conn.log, Log/ssl.log
-      ↓
-   Watcher (tail + rotation)          ┌──────────────┐
-      ↓                               │   Frontend   │
- Python Detection Engine              │  React + Vite│
-      ↓                               │  Dashboard   │
- Threat Detected                      └──────▲───────┘
-      ↓                                     │ REST
- Alert + Auto-Blocking ─────────────────┐   │
-      ↓                                 │   │
-   Express API (REST)                   │   │
-      ↓                                 │   │
-   MongoDB Atlas ◄──────────────────────┘   │
-      ↓                                     │
-   Dashboard ◄──────────────────────────────┘
-```
-
 **Data flow:** Zeek captures traffic → writes tab-separated log files → the Python `watcher` tails those files → `parser` normalises each line → `detectors` raise alerts → alerts are uploaded to the Express API → stored in MongoDB Atlas → the React dashboard polls and renders them.
 
 ---
@@ -92,38 +70,6 @@ Network Traffic
 | Database | MongoDB Atlas |
 | Frontend | React 19, Vite 5, lucide-react |
 | Linting | oxlint |
-
----
-
-## 📁 Project Structure
-
-```text
-CyberShield/
-├── Backend/                 # Express REST API
-│   ├── config/db.js         # MongoDB connection
-│   ├── controllers/         # threats, blocked IPs, stats
-│   ├── middleware/          # error handler
-│   ├── models/              # Threat, BlockedIP (Mongoose)
-│   ├── routes/              # REST route definitions
-│   ├── utils/response.js    # standard response helper
-│   └── server.js            # app entry point
-├── Engine/                  # Python detection engine
-│   ├── config.py            # thresholds & mode settings
-│   ├── detectors.py         # 8 threat detectors
-│   ├── main.py              # entry point (monitor threads)
-│   ├── parser.py            # Zeek log line parsers
-│   ├── prevention.py        # IP blocking (simulation/firewall)
-│   ├── test_driver.py       # automated test suite
-│   ├── utils.py             # debug log, alert formatting, upload
-│   └── watcher.py           # log tailer (handles rotation)
-├── Log/                     # Zeek output logs + start_zeek.py
-├── frontend/                # React + Vite dashboard
-│   ├── src/api/             # API client modules
-│   ├── src/components/      # dashboard components
-│   ├── src/App.jsx          # main app shell
-│   └── vite.config.js
-└── readme.md
-```
 
 ---
 
@@ -310,7 +256,3 @@ All responses follow the standard shape: `{ success, message, data }`.
 - `VITE_API_BASE_URL` – backend API base URL
 
 ---
-
-## ⚠️ Disclaimer
-
-This project is a **hackathon / educational** security tool. IP‑blocking should only be enabled in a controlled lab environment. In `SIMULATION_MODE=False`, firewall rules are applied with `sudo`, so review `Engine/prevention.py` carefully before enabling real blocking on production systems.
