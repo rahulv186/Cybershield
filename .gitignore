@@ -1,4 +1,7 @@
-.vscode
+# IDE files
+.idea/
+.vscode/
+
 
 *.log
 
