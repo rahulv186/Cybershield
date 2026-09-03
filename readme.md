@@ -79,6 +79,7 @@ Detection thresholds (window sizes, connection counts, byte limits, etc.) are fu
 - **Python** 3.9+
 - **MongoDB** account (Atlas cluster or local instance)
 - **Zeek** (optional – only for live packet capture; you can feed log files manually)
+- **iptables** (required only for actual IP blocking)
 
 ---
 
@@ -231,6 +232,8 @@ python3 test_driver.py
 
 All responses follow the standard shape: `{ success, message, data }`.
 
+> **Note:** Automatic IP blocking requires `iptables` to be installed and available on the system. By default, `SIMULATION_MODE = True`, so CyberShield only simulates the blocking action without modifying firewall rules. To enable actual IP blocking, install `iptables` and set `SIMULATION_MODE = False`.
+
 ---
 
 ## ⚙️ Configuration
@@ -238,7 +241,7 @@ All responses follow the standard shape: `{ success, message, data }`.
 ### Engine (`Engine/config.py`)
 
 - `DEBUG` – verbose console output
-- `SIMULATION_MODE` – `True` logs blocks instead of touching the firewall (recommended for testing)
+- `SIMULATION_MODE` – `True` logs/simulates IP blocking without modifying the firewall. Set to `False` to enable actual IP blocking. **Actual IP blocking requires `iptables` to be installed and available on the system.**
 - `DDOS_THRESHOLD` / `DDOS_WINDOW` – DDoS connection count and window (seconds)
 - `PORTSCAN_THRESHOLD` – unique destination ports before flagging
 - `BEACON_MIN_EVENTS` / `BEACON_TOLERANCE` – beacon interval consistency
