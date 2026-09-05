@@ -2,7 +2,7 @@
 # Central configuration for the Python Detection Engine
 
 # General Engine Settings
-DEBUG = True
+DEBUG = False
 SIMULATION_MODE = False
 
 # Log file paths monitored by the watchdog

@@ -13,6 +13,7 @@ import requests
 BACKEND_URL = "http://localhost:5050"
 
 
+
 def upload_blocked_ip(ip, reason):
     print(f"[UPLOAD] Sending {ip} to backend...")
 
@@ -63,6 +64,9 @@ def block_ip(ip, reason):
     Blocks an IP address using system firewall commands or simulation.
     """
     print(f"block_ip() called with IP: {ip}")
+    print(f"[DEBUG] blocked_ips = {blocked_ips}")
+    print(f"[DEBUG] PROTECTED_IPS = {config.PROTECTED_IPS}")
+    print(f"[DEBUG] SIMULATION_MODE = {config.SIMULATION_MODE}")
     if not ip:
         return
 
@@ -78,6 +82,10 @@ def block_ip(ip, reason):
         simulate_block(ip)
         blocked_ips.add(ip)
         upload_blocked_ip(ip, reason)
+<<<<<<< HEAD
+=======
+        print(blocked_ips)
+>>>>>>> dcbc097 (Bug Fixes)
         return
     else:
         utils.debug_log(f"Attempting to block IP {ip} in Real Firewall Mode...")

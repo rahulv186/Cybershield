@@ -121,9 +121,15 @@ def detect_port_scan(record):
     unique_ports = {item[0] for item in port_scan_state[src_ip]}
     unique_count = len(unique_ports)
 
+
+    print(
+    f"[PORTSCAN DEBUG] {src_ip} -> "
+    f"port={dst_port}, unique={unique_count}"
+	)
+
     utils.debug_log(f"[Port Scan Check] IP {src_ip} scanned {unique_count} unique ports in last 60s (Threshold: {config.PORTSCAN_THRESHOLD})")
 
-    if unique_count > config.PORTSCAN_THRESHOLD:
+    if unique_count >= config.PORTSCAN_THRESHOLD:
         scanned_list = sorted(list(unique_ports))
         # Clear state after alert to avoid alert storms
         port_scan_state[src_ip] = []
