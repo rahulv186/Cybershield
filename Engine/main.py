@@ -66,16 +66,25 @@ def monitor_conn():
             # Process any alerts generated
             for a in alerts:
                 utils.format_alert(a)
-                # Take prevention action for critical/active threats
-                if a["attack_type"] in ["DDoS Attack", "Port Scan", "Connection Flood", "IP Spoofing (Heuristic Check)"]:
-                    reason = {
-                        "attack_type":a["attack_type"],
-                        "timestamp":a["detectedAt"],
-                        "protocol":a["protocol"],
-                        "description":a["description"],
-                        "evidence":a["evidence"],
 
+                print(f"[DEBUG] Attack type: {repr(a['attack_type'])}")
+
+                if a["attack_type"] in [
+                    "DDoS Attack",
+                    "Port Scan",
+                    "Connection Flood",
+                    "IP Spoofing (Heuristic Check)"
+                ]:
+                    print("[DEBUG] Calling block_ip()")
+
+                    reason = {
+                        "attack_type": a["attack_type"],
+                        "timestamp": a["detectedAt"],
+                        "protocol": a["protocol"],
+                        "description": a["description"],
+                        "evidence": a["evidence"],
                     }
+
                     prevention.block_ip(a["source_ip"], reason)
 
                     

@@ -14,6 +14,8 @@ BACKEND_URL = "http://localhost:5050"
 
 
 def upload_blocked_ip(ip, reason):
+    print(f"[UPLOAD] Sending {ip} to backend...")
+
     try:
         response = requests.post(
             f"{BACKEND_URL}/api/blocked",
@@ -23,6 +25,9 @@ def upload_blocked_ip(ip, reason):
             },
             timeout=5
         )
+
+        print(f"[UPLOAD] Status: {response.status_code}")
+        print(f"[UPLOAD] Response: {response.text}")
 
         response.raise_for_status()
 
@@ -89,7 +94,7 @@ def block_ip(ip, reason):
                 utils.debug_log(f"Failed to add route block for {ip}: {e}. Ensure script is run as root/sudo.")
         elif sys.platform.startswith("linux"):
             # Linux: iptables
-            cmd = ["sudo", "-n", "/usr/sbin/iptables", "-A", "INPUT", "-s", ip, "-j", "DROP"]
+            cmd = ["sudo", "-n", "/usr/sbin/iptables", "-I", "INPUT", "1", "-s", ip, "-j", "DROP"]
             try:
                 subprocess.run(cmd, check=True)
                 utils.debug_log(f"Successfully added iptables DROP rule for {ip}")
