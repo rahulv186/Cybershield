@@ -86,7 +86,7 @@ def detect_ddos(record):
     if current_count > config.DDOS_THRESHOLD:
         # Clear state after detection to prevent alert flooding
         ddos_state[src_ip] = []
-        ddos_score = min(100, 70 + ((current_count - 20)/20) * 30)
+        # ddos_score = min(100, 70 + ((current_count - 20)/20) * 30)
         return {
             "attack_type": "DDoS Attack",
             "severity": "CRITICAL",

@@ -3,22 +3,22 @@
 
 # General Engine Settings
 DEBUG = True
-SIMULATION_MODE = True
+SIMULATION_MODE = False
 
 # Log file paths monitored by the watchdog
 CONN_LOG_PATH = "../Log/conn.log"
 SSL_LOG_PATH = "../Log/ssl.log"
 
 # Threat 1: DDoS Detection Settings
-DDOS_THRESHOLD = 20        # Number of connections from a single IP
-DDOS_WINDOW = 5.0          # Time window in seconds
+DDOS_THRESHOLD = 100        # Number of connections from a single IP
+DDOS_WINDOW = 1.0           # Time window in seconds
 
 # Threat 2: Port Scan Detection Settings
 PORTSCAN_THRESHOLD = 10    # Number of unique destination ports scanned by a single IP
 
 # Threat 3: Beacon Detection Settings
 BEACON_MIN_EVENTS = 5      # Minimum number of intervals to calculate consistency (requires 6 timestamps)
-BEACON_TOLERANCE = 2.0     # Allowed deviation in seconds from the average interval
+BEACON_TOLERANCE = 1.0     # Allowed deviation in seconds from the average interval
 
 # Threat 4: Data Exfiltration Settings
 UPLOAD_HISTORICAL_MULTIPLIER = 5.0  # Alert if current upload is > 5x historical average
@@ -32,3 +32,10 @@ FAILED_CONN_WINDOW = 10.0    # Time window in seconds
 FLOOD_THRESHOLD = 30         # Number of connections
 FLOOD_WINDOW = 5.0           # Time window in seconds
 FLOOD_DURATION_THRESHOLD = 0.2 # Connections lasting less than this (in seconds) are considered short-lived
+
+# Protected IPs that should never be blocked (e.g., internal services, trusted sources)
+PROTECTED_IPS = {
+    "172.16.124.128 ",
+    "10.10.10.2 ",
+    "172.17.0.1 "
+}

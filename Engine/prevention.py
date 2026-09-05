@@ -42,6 +42,11 @@ def block_ip(ip, reason):
     print(f"block_ip() called with IP: {ip}")
     if not ip:
         return
+
+    if ip in config.PROTECTED_IPS:
+        utils.debug_log(f"IP {ip} is protected and cannot be blocked. Skipping.")
+        return
+    
     if ip in blocked_ips:
         utils.debug_log(f"IP {ip} is already blocked. Skipping.")
         return
@@ -51,6 +56,7 @@ def block_ip(ip, reason):
         blocked_ips.add(ip)
         upload_blocked_ip(ip, reason)
         print(blocked_ips)
+        return
     else:
         utils.debug_log(f"Attempting to block IP {ip} in Real Firewall Mode...")
         if sys.platform == "darwin":
@@ -65,7 +71,7 @@ def block_ip(ip, reason):
                 utils.debug_log(f"Failed to add route block for {ip}: {e}. Ensure script is run as root/sudo.")
         elif sys.platform.startswith("linux"):
             # Linux: iptables
-            cmd = ["sudo", "iptables", "-A", "INPUT", "-s", ip, "-j", "DROP"]
+            cmd = ["sudo", "-n", "/usr/sbin/iptables", "-A", "INPUT", "-s", ip, "-j", "DROP"]
             try:
                 subprocess.run(cmd, check=True)
                 utils.debug_log(f"Successfully added iptables DROP rule for {ip}")
@@ -99,7 +105,13 @@ def unblock_ip(ip):
             except Exception as e:
                 utils.debug_log(f"Failed to delete route block for {ip}: {e}")
         elif sys.platform.startswith("linux"):
-            cmd = ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"]
+            cmd = [
+        "sudo", "-n",
+        "/usr/sbin/iptables",
+        "-D", "INPUT",
+        "-s", ip,
+        "-j", "DROP"
+    ]
             try:
                 subprocess.run(cmd, check=True)
                 utils.debug_log(f"Successfully deleted iptables rule for {ip}")
