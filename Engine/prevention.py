@@ -82,10 +82,7 @@ def block_ip(ip, reason):
         simulate_block(ip)
         blocked_ips.add(ip)
         upload_blocked_ip(ip, reason)
-<<<<<<< HEAD
-=======
         print(blocked_ips)
->>>>>>> dcbc097 (Bug Fixes)
         return
     else:
         utils.debug_log(f"Attempting to block IP {ip} in Real Firewall Mode...")
