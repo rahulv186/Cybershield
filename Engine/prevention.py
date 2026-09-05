@@ -33,6 +33,24 @@ def upload_blocked_ip(ip, reason):
         print(f"❌ Failed to upload blocked IP: {e}")
         return None
 
+def upload_unblocked_ip(ip):
+    try:
+        response = requests.delete(
+            f"{BACKEND_URL}/api/blocked",
+            json={
+                "blockedIP": ip
+            },
+            timeout=5
+        )
+
+        response.raise_for_status()
+
+        print(f"✅ Unblocked IP {ip} successfully.")
+        return response.json()
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to unblock IP {ip}: {e}")
+        return None
 
 
 def block_ip(ip, reason):
@@ -55,7 +73,6 @@ def block_ip(ip, reason):
         simulate_block(ip)
         blocked_ips.add(ip)
         upload_blocked_ip(ip, reason)
-        print(blocked_ips)
         return
     else:
         utils.debug_log(f"Attempting to block IP {ip} in Real Firewall Mode...")
@@ -67,6 +84,7 @@ def block_ip(ip, reason):
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                 utils.debug_log(f"Successfully blackholed traffic from {ip}")
                 blocked_ips.add(ip)
+                upload_blocked_ip(ip, reason)
             except Exception as e:
                 utils.debug_log(f"Failed to add route block for {ip}: {e}. Ensure script is run as root/sudo.")
         elif sys.platform.startswith("linux"):
@@ -76,6 +94,7 @@ def block_ip(ip, reason):
                 subprocess.run(cmd, check=True)
                 utils.debug_log(f"Successfully added iptables DROP rule for {ip}")
                 blocked_ips.add(ip)
+                upload_blocked_ip(ip, reason)
             except Exception as e:
                 utils.debug_log(f"Failed to run iptables block for {ip}: {e}. Ensure script is run as root/sudo.")
         else:
