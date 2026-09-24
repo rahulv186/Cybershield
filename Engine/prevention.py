@@ -13,18 +13,14 @@ import requests
 BACKEND_URL = "http://localhost:5050"
 
 
-
 def upload_blocked_ip(ip, reason):
     print(f"[UPLOAD] Sending {ip} to backend...")
 
     try:
         response = requests.post(
             f"{BACKEND_URL}/api/blocked",
-            json={
-                "blockedIP": ip,
-                "reason": reason
-            },
-            timeout=5
+            json={"blockedIP": ip, "reason": reason},
+            timeout=5,
         )
 
         print(f"[UPLOAD] Status: {response.status_code}")
@@ -39,14 +35,11 @@ def upload_blocked_ip(ip, reason):
         print(f"❌ Failed to upload blocked IP: {e}")
         return None
 
+
 def upload_unblocked_ip(ip):
     try:
         response = requests.delete(
-            f"{BACKEND_URL}/api/blocked",
-            json={
-                "blockedIP": ip
-            },
-            timeout=5
+            f"{BACKEND_URL}/api/blocked", json={"blockedIP": ip}, timeout=5
         )
 
         response.raise_for_status()
@@ -73,7 +66,7 @@ def block_ip(ip, reason):
     if ip in config.PROTECTED_IPS:
         utils.debug_log(f"IP {ip} is protected and cannot be blocked. Skipping.")
         return
-    
+
     if ip in blocked_ips:
         utils.debug_log(f"IP {ip} is already blocked. Skipping.")
         return
@@ -96,19 +89,37 @@ def block_ip(ip, reason):
                 blocked_ips.add(ip)
                 upload_blocked_ip(ip, reason)
             except Exception as e:
-                utils.debug_log(f"Failed to add route block for {ip}: {e}. Ensure script is run as root/sudo.")
+                utils.debug_log(
+                    f"Failed to add route block for {ip}: {e}. Ensure script is run as root/sudo."
+                )
         elif sys.platform.startswith("linux"):
             # Linux: iptables
-            cmd = ["sudo", "-n", "/usr/sbin/iptables", "-I", "INPUT", "1", "-s", ip, "-j", "DROP"]
+            cmd = [
+                "sudo",
+                "-n",
+                "/usr/sbin/iptables",
+                "-I",
+                "INPUT",
+                "1",
+                "-s",
+                ip,
+                "-j",
+                "DROP",
+            ]
             try:
                 subprocess.run(cmd, check=True)
                 utils.debug_log(f"Successfully added iptables DROP rule for {ip}")
                 blocked_ips.add(ip)
                 upload_blocked_ip(ip, reason)
             except Exception as e:
-                utils.debug_log(f"Failed to run iptables block for {ip}: {e}. Ensure script is run as root/sudo.")
+                utils.debug_log(
+                    f"Failed to run iptables block for {ip}: {e}. Ensure script is run as root/sudo."
+                )
         else:
-            utils.debug_log(f"Real Firewall Mode blocking not implemented for OS: {sys.platform}")
+            utils.debug_log(
+                f"Real Firewall Mode blocking not implemented for OS: {sys.platform}"
+            )
+
 
 def unblock_ip(ip):
     """
@@ -135,12 +146,16 @@ def unblock_ip(ip):
                 utils.debug_log(f"Failed to delete route block for {ip}: {e}")
         elif sys.platform.startswith("linux"):
             cmd = [
-        "sudo", "-n",
-        "/usr/sbin/iptables",
-        "-D", "INPUT",
-        "-s", ip,
-        "-j", "DROP"
-    ]
+                "sudo",
+                "-n",
+                "/usr/sbin/iptables",
+                "-D",
+                "INPUT",
+                "-s",
+                ip,
+                "-j",
+                "DROP",
+            ]
             try:
                 subprocess.run(cmd, check=True)
                 utils.debug_log(f"Successfully deleted iptables rule for {ip}")
@@ -148,7 +163,10 @@ def unblock_ip(ip):
             except Exception as e:
                 utils.debug_log(f"Failed to delete iptables rule for {ip}: {e}")
         else:
-            utils.debug_log(f"Real Firewall Mode unblocking not implemented for OS: {sys.platform}")
+            utils.debug_log(
+                f"Real Firewall Mode unblocking not implemented for OS: {sys.platform}"
+            )
+
 
 def simulate_block(ip):
     """
@@ -156,8 +174,10 @@ def simulate_block(ip):
     """
     print(f"[SIMULATION] Blocking IP: {ip}")
 
+
 def log_only(ip):
     """
     Logs the alert without taking blocking action.
     """
+
     print(f"[LOG ONLY] Alert triggered for IP: {ip} - No blocking action taken.")
