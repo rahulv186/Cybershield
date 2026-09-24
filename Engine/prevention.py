@@ -120,53 +120,109 @@ def block_ip(ip, reason):
                 f"Real Firewall Mode blocking not implemented for OS: {sys.platform}"
             )
 
-
 def unblock_ip(ip):
     """
     Unblocks an IP address by removing firewall rules.
+    Returns True if the firewall rule was removed successfully.
     """
+
     if not ip:
-        return
-    if ip not in blocked_ips:
-        utils.debug_log(f"IP {ip} is not currently blocked. Skipping unblock.")
-        return
+        return False
 
     if config.SIMULATION_MODE:
         print(f"[SIMULATION] Unblocking IP: {ip}")
         blocked_ips.discard(ip)
-    else:
-        utils.debug_log(f"Attempting to unblock IP {ip} in Real Firewall Mode...")
-        if sys.platform == "darwin":
-            cmd = ["sudo", "route", "delete", "-host", ip, "127.0.0.1", "-blackhole"]
-            try:
-                subprocess.run(cmd, check=True)
-                utils.debug_log(f"Successfully deleted blackhole route for {ip}")
-                blocked_ips.discard(ip)
-            except Exception as e:
-                utils.debug_log(f"Failed to delete route block for {ip}: {e}")
-        elif sys.platform.startswith("linux"):
-            cmd = [
-                "sudo",
-                "-n",
-                "/usr/sbin/iptables",
-                "-D",
-                "INPUT",
-                "-s",
-                ip,
-                "-j",
-                "DROP",
-            ]
-            try:
-                subprocess.run(cmd, check=True)
-                utils.debug_log(f"Successfully deleted iptables rule for {ip}")
-                blocked_ips.discard(ip)
-            except Exception as e:
-                utils.debug_log(f"Failed to delete iptables rule for {ip}: {e}")
-        else:
-            utils.debug_log(
-                f"Real Firewall Mode unblocking not implemented for OS: {sys.platform}"
+        return True
+
+    utils.debug_log(
+        f"Attempting to unblock IP {ip} in Real Firewall Mode..."
+    )
+
+    if sys.platform == "darwin":
+        cmd = [
+            "sudo",
+            "-n",
+            "route",
+            "delete",
+            "-host",
+            ip,
+            "127.0.0.1",
+            "-blackhole",
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
             )
 
+            utils.debug_log(
+                f"Successfully deleted blackhole route for {ip}"
+            )
+
+            blocked_ips.discard(ip)
+            return True
+
+        except subprocess.CalledProcessError as e:
+            utils.debug_log(
+                f"Failed to delete route for {ip}: "
+                f"stdout={e.stdout} stderr={e.stderr}"
+            )
+            return False
+
+    elif sys.platform.startswith("linux"):
+        cmd = [
+            "sudo",
+            "-n",
+            "/usr/sbin/iptables",
+            "-D",
+            "INPUT",
+            "-s",
+            ip,
+            "-j",
+            "DROP",
+        ]
+
+        print(f"[FIREWALL] Removing rule for {ip}")
+        print(f"[FIREWALL] Command: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            print(f"[FIREWALL] iptables stdout: {result.stdout}")
+            print(f"[FIREWALL] iptables stderr: {result.stderr}")
+
+            utils.debug_log(
+                f"Successfully deleted iptables rule for {ip}"
+            )
+
+            blocked_ips.discard(ip)
+            return True
+
+        except subprocess.CalledProcessError as e:
+            print(f"[FIREWALL ERROR] iptables failed")
+            print(f"[FIREWALL ERROR] return code: {e.returncode}")
+            print(f"[FIREWALL ERROR] stdout: {e.stdout}")
+            print(f"[FIREWALL ERROR] stderr: {e.stderr}")
+
+            utils.debug_log(
+                f"Failed to delete iptables rule for {ip}: {e.stderr}"
+            )
+
+            return False
+
+    else:
+        utils.debug_log(
+            f"Real Firewall Mode unblocking not implemented for OS: {sys.platform}"
+        )
+        return False
 
 def simulate_block(ip):
     """

@@ -43,13 +43,22 @@ def unblock_ip(request: UnblockRequest):
     print(f"[API] Unblock request received: {ip}")
 
     try:
-        prevention.unblock_ip(ip)
+        success = prevention.unblock_ip(ip)
+
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to remove firewall rule for {ip}"
+            )
 
         return {
             "success": True,
-            "message": f"Unblock request processed for {ip}",
+            "message": f"IP {ip} unblocked successfully",
             "ip": ip
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         print(f"[API ERROR] {e}")
@@ -58,7 +67,6 @@ def unblock_ip(request: UnblockRequest):
             status_code=500,
             detail=str(e)
         )
-
 
 if __name__ == "__main__":
     import uvicorn

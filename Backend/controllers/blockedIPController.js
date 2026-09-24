@@ -1,5 +1,6 @@
 const BlockedIP = require('../models/BlockedIP');
 const sendResponse = require('../utils/response');
+const axios = require('axios');
 
 // @desc    Store blocked IP
 // @route   POST /api/blocked
@@ -34,18 +35,72 @@ const getBlockedIPs = async (req, res, next) => {
     }
 };
 
-// @desc    Remove blocked IP
+// @desc    Unblock and remove blocked IP
 // @route   DELETE /api/blocked/:ip
 const deleteBlockedIP = async (req, res, next) => {
     try {
         const { ip } = req.params;
-        const deletedIP = await BlockedIP.findOneAndDelete({ blockedIP: ip });
 
-        if (!deletedIP) {
-            return sendResponse(res, 404, false, 'Blocked IP not found.');
+        if (!ip || ip.trim() === '') {
+            return sendResponse(res, 400, false, 'IP address is required.');
         }
 
-        return sendResponse(res, 200, true, 'Blocked IP removed successfully.');
+        // Ask Python local server to remove the firewall rule
+        try {
+            const response = await axios.post(
+                'http://127.0.0.1:5060/api/unblock',
+                {
+                    ip: ip.trim()
+                },
+                {
+                    timeout: 5000
+                }
+            );
+
+            if (!response.data?.success) {
+                return sendResponse(
+                    res,
+                    500,
+                    false,
+                    'Failed to unblock IP from firewall.'
+                );
+            }
+
+        } catch (pythonError) {
+            console.error(
+                '[PYTHON UNBLOCK ERROR]',
+                pythonError.response?.data || pythonError.message
+            );
+
+            return sendResponse(
+                res,
+                503,
+                false,
+                'Python security server is unavailable. IP was not removed.'
+            );
+        }
+
+        // Only remove from MongoDB after firewall unblock succeeds
+        const deletedIP = await BlockedIP.findOneAndDelete({
+            blockedIP: ip.trim()
+        });
+
+        if (!deletedIP) {
+            return sendResponse(
+                res,
+                404,
+                false,
+                'IP was unblocked, but no matching database record was found.'
+            );
+        }
+
+        return sendResponse(
+            res,
+            200,
+            true,
+            'IP unblocked and removed successfully.'
+        );
+
     } catch (error) {
         next(error);
     }
