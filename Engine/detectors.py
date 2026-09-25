@@ -1,513 +1,437 @@
-# detectors.py
-# REDESIGNED Python Detection Engine
-# Procedural state and detector functions for all 8 threats
+"""Network detectors for the Zeek-backed CyberShield engine.
 
-import time
+The parser deliberately exposes only fields present in Zeek conn.log and
+ssl.log. These detectors therefore report network evidence, not application
+events that Zeek has not observed (for example, SSH password failures).
+"""
+
 import datetime
-from collections import defaultdict
+import ipaddress
+from collections import defaultdict, deque
+
 import config
-import utils
-
-# ==============================================================================
-# STATE STORAGE (Procedural memory)
-# ==============================================================================
-
-# Threat 1 (DDoS): src_ip -> list of floats (timestamps)
-ddos_state = defaultdict(list)
-
-# Threat 2 (Port Scan): src_ip -> list of tuples (dst_port, timestamp)
-port_scan_state = defaultdict(list)
-
-# Threat 3 (Beaconing): (src_ip, dst_ip) -> list of floats (timestamps)
-beacon_state = defaultdict(list)
-
-# Threat 4 (Data Exfiltration): src_ip -> list of ints (bytes sent)
-exfil_state = defaultdict(list)
-
-# Threat 6 (Suspicious Failed Connections): src_ip -> list of floats (timestamps)
-failed_conn_state = defaultdict(list)
-
-# Threat 7 (Connection Flood): src_ip -> list of floats (timestamps)
-flood_state = defaultdict(list)
 
 
-# ==============================================================================
-# HELPER FUNCTIONS
-# ==============================================================================
+# State is bounded by deque limits and rolling windows. Cooldowns prevent a
+# continuing event from creating an alert for every Zeek record.
+ddos_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+port_scan_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+horizontal_scan_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+beacon_state = defaultdict(lambda: deque(maxlen=config.BEACON_MAX_EVENTS))
+exfil_state = defaultdict(lambda: deque(maxlen=config.EXFIL_HISTORY_MAX))
+failed_conn_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+flood_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+ssh_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+burst_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+service_abuse_state = defaultdict(lambda: deque(maxlen=config.STATE_MAX_EVENTS))
+alert_cooldowns = {}
+
 
 def format_epoch(epoch_time):
-    """Converts epoch float timestamp to readable format."""
     try:
-        return datetime.datetime.fromtimestamp(epoch_time).strftime('%Y-%m-%d %H:%M:%S')
-    except Exception:
+        return datetime.datetime.fromtimestamp(float(epoch_time)).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
         return str(epoch_time)
 
-def is_private_ip(ip):
-    """Heuristic check to see if an IP is within private ranges (RFC 1918)."""
-    parts = ip.split('.')
-    if len(parts) != 4:
-        return False
+
+def _timestamp(record):
     try:
-        p1, p2 = int(parts[0]), int(parts[1])
-        if p1 == 10:
-            return True
-        if p1 == 172 and (16 <= p2 <= 31):
-            return True
-        if p1 == 192 and p2 == 168:
-            return True
+        value = float(record.get("timestamp"))
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _prune(events, timestamp, window):
+    cutoff = timestamp - max(float(window), 0.0)
+    while events:
+        first = events[0]
+        first_timestamp = first[0] if isinstance(first, tuple) else first
+        if first_timestamp >= cutoff:
+            break
+        events.popleft()
+
+
+def _cooldown_ready(name, key, timestamp):
+    cooldown_key = (name, key)
+    last_alert = alert_cooldowns.get(cooldown_key)
+    if last_alert is not None and timestamp - last_alert < config.ALERT_COOLDOWN:
         return False
+    alert_cooldowns[cooldown_key] = timestamp
+    return True
+
+
+def _alert(attack_type, severity, timestamp, source_ip, destination_ip,
+           protocol, description, evidence, recommendation):
+    return {
+        "attack_type": attack_type,
+        "severity": severity,
+        "detectedAt": format_epoch(timestamp),
+        "source_ip": source_ip,
+        "destination_ip": destination_ip,
+        "protocol": protocol or "Unknown",
+        "description": description,
+        "evidence": evidence,
+        "recommendation": recommendation,
+    }
+
+
+def _count_score(count, threshold, weight=35):
+    if threshold <= 0:
+        return 100
+    return min(100, int(65 + max(0, count - threshold) * weight / threshold))
+
+
+def is_private_ip(ip):
+    try:
+        return ipaddress.ip_address(ip).is_private
     except ValueError:
         return False
 
-# ==============================================================================
-# DETECTORS
-# ==============================================================================
 
 def detect_ddos(record):
-    """
-    THREAT 1: DDoS Detection
-    Detects a single source IP initiating a high number of connections in a short time.
-    """
-    src_ip = record.get("src_ip")
-    ts = record.get("timestamp")
-    if not src_ip or not ts:
+    """Detect a high source connection rate in a rolling window."""
+    src, ts = record.get("src_ip"), _timestamp(record)
+    if not src or ts is None:
         return None
+    events = ddos_state[src]
+    events.append((ts, record.get("dst_ip", "")))
+    _prune(events, ts, config.DDOS_WINDOW)
+    count = len(events)
+    if count < config.DDOS_THRESHOLD or not _cooldown_ready("ddos", src, ts):
+        return None
+    destinations = len({item[1] for item in events if item[1]})
+    return _alert(
+        "DDoS Attack", "CRITICAL", ts, src, record.get("dst_ip", "Multiple"),
+        record.get("protocol", "TCP"),
+        f"High connection rate from {src} detected in a rolling window.",
+        f"Connections: {count}; unique destinations: {destinations}; threshold: "
+        f"{config.DDOS_THRESHOLD} in {config.DDOS_WINDOW}s; score: "
+        f"{_count_score(count, config.DDOS_THRESHOLD)} / 100",
+        "Rate-limit or temporarily block the source after validating it is not trusted traffic.",
+    )
 
-    # Append current timestamp
-    ddos_state[src_ip].append(ts)
 
-    # Remove timestamps older than the configured window
-    cutoff = ts - config.DDOS_WINDOW
-    ddos_state[src_ip] = [t for t in ddos_state[src_ip] if t >= cutoff]
-    current_count = len(ddos_state[src_ip])
-
-    utils.debug_log(f"[DDoS Check] IP {src_ip} has {current_count} connections in last {config.DDOS_WINDOW}s (Threshold: {config.DDOS_THRESHOLD})")
-
-    if current_count > config.DDOS_THRESHOLD:
-        # Clear state after detection to prevent alert flooding
-        ddos_state[src_ip] = []
-        # ddos_score = min(100, 70 + ((current_count - 20)/20) * 30)
-        return {
-            "attack_type": "DDoS Attack",
-            "severity": "CRITICAL",
-            "detectedAt": format_epoch(ts),
-            "source_ip": src_ip,
-            "destination_ip": record.get("dst_ip", "Multiple"),
-            "protocol":"TCP/HTTPS",
-            "description": f"IP {src_ip} initiated {current_count} connections in {config.DDOS_WINDOW} seconds, exceeding threshold.",
-            "evidence": f"Connections: {current_count} (Threshold: {config.DDOS_THRESHOLD} in {config.DDOS_WINDOW}s)",
-            "recommendation": "Temporarily block IP using firewall rule."
-        }
-    return None
+def _detect_vertical_scan(record, attack_type):
+    src, dst, port, ts = (record.get("src_ip"), record.get("dst_ip"),
+                           record.get("dst_port"), _timestamp(record))
+    if not src or not dst or port in (None, "") or ts is None:
+        return None
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return None
+    events = port_scan_state[src]
+    events.append((ts, dst, port))
+    _prune(events, ts, config.PORTSCAN_WINDOW)
+    ports = {item[2] for item in events if item[1] == dst}
+    if (len(ports) < config.PORTSCAN_THRESHOLD or
+            not _cooldown_ready("vertical_scan", (src, dst), ts)):
+        return None
+    return _alert(
+        attack_type, "HIGH", ts, src, dst, record.get("protocol", "TCP"),
+        f"{src} contacted {len(ports)} different ports on {dst} in a rolling window.",
+        f"Unique destination ports: {len(ports)}; threshold: {config.PORTSCAN_THRESHOLD} "
+        f"in {config.PORTSCAN_WINDOW}s; ports: {sorted(ports)}; score: "
+        f"{_count_score(len(ports), config.PORTSCAN_THRESHOLD)} / 100",
+        "Investigate the source and restrict access to only required services.",
+    )
 
 
 def detect_port_scan(record):
-    """
-    THREAT 2: Port Scan Detection
-    Detects one host scanning many different destination ports.
-    """
-    src_ip = record.get("src_ip")
-    dst_port = record.get("dst_port")
-    ts = record.get("timestamp")
-    if not src_ip or dst_port is None or not ts:
+    """Backward-compatible vertical scan detector."""
+    return _detect_vertical_scan(record, "Port Scan")
+
+
+def detect_vertical_port_scan(record):
+    return _detect_vertical_scan(record, "Vertical Port Scan")
+
+
+def detect_horizontal_port_scan(record):
+    """Detect one source contacting the same port on many destinations."""
+    src, dst, port, ts = (record.get("src_ip"), record.get("dst_ip"),
+                           record.get("dst_port"), _timestamp(record))
+    if not src or not dst or port in (None, "") or ts is None:
         return None
-
-    # Keep port scan history within a rolling 60-second window to prevent stale accumulation
-    port_scan_state[src_ip].append((dst_port, ts))
-    cutoff = ts - 60.0
-    port_scan_state[src_ip] = [item for item in port_scan_state[src_ip] if item[1] >= cutoff]
-
-    # Calculate unique ports
-    unique_ports = {item[0] for item in port_scan_state[src_ip]}
-    unique_count = len(unique_ports)
-
-
-    print(
-    f"[PORTSCAN DEBUG] {src_ip} -> "
-    f"port={dst_port}, unique={unique_count}"
-	)
-
-    utils.debug_log(f"[Port Scan Check] IP {src_ip} scanned {unique_count} unique ports in last 60s (Threshold: {config.PORTSCAN_THRESHOLD})")
-
-    if unique_count >= config.PORTSCAN_THRESHOLD:
-        scanned_list = sorted(list(unique_ports))
-        # Clear state after alert to avoid alert storms
-        port_scan_state[src_ip] = []
-        port_score = min(100, 70+ ((unique_count-config.PORTSCAN_THRESHOLD)/config.PORTSCAN_THRESHOLD )* 100)
-        return {
-            "attack_type": "Port Scan",
-            "severity": "CRITICAL",
-            "detectedAt": format_epoch(ts),
-            "source_ip": src_ip,
-            "destination_ip": record.get("dst_ip", "Multiple"),
-            "protocol":"TCP",
-            "description": f"IP {src_ip} scanned {unique_count} unique ports in 60s.",
-            "evidence": f"Scanned Port Count: {unique_count} (Threshold: {config.PORTSCAN_THRESHOLD}). Scanned Ports: {scanned_list}",
-            "recommendation": "Block source IP and investigate port scanning behavior."
-        }
-    return None
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return None
+    events = horizontal_scan_state[(src, port)]
+    events.append((ts, dst))
+    _prune(events, ts, config.HORIZONTAL_SCAN_WINDOW)
+    destinations = {item[1] for item in events}
+    if (len(destinations) < config.HORIZONTAL_SCAN_THRESHOLD or
+            not _cooldown_ready("horizontal_scan", (src, port), ts)):
+        return None
+    return _alert(
+        "Horizontal Port Scan", "HIGH", ts, src, "Multiple",
+        record.get("protocol", "TCP"),
+        f"{src} contacted port {port} on {len(destinations)} destinations.",
+        f"Unique destinations: {len(destinations)}; port: {port}; threshold: "
+        f"{config.HORIZONTAL_SCAN_THRESHOLD} in {config.HORIZONTAL_SCAN_WINDOW}s; "
+        f"score: {_count_score(len(destinations), config.HORIZONTAL_SCAN_THRESHOLD)} / 100",
+        "Investigate the source and restrict east-west access to approved hosts.",
+    )
 
 
 def detect_beacon(record):
-    """
-    THREAT 3: Beacon Detection
-    Detects malware periodically contacting the same server (constant communication intervals).
-    """
-    src_ip = record.get("src_ip")
-    dst_ip = record.get("dst_ip")
-    ts = record.get("timestamp")
-    if not src_ip or not dst_ip or not ts:
+    """Detect regular repeated connections to one destination as a C2 heuristic."""
+    src, dst, ts = record.get("src_ip"), record.get("dst_ip"), _timestamp(record)
+    if not src or not dst or ts is None:
         return None
-
-    key = (src_ip, dst_ip)
-    beacon_state[key].append(ts)
-
-    # Keep at most last 10 connections for memory optimization
-    if len(beacon_state[key]) > 10:
-        beacon_state[key] = beacon_state[key][-10:]
-
-    timestamps = beacon_state[key]
-    utils.debug_log(f"[Beacon Check] {src_ip} -> {dst_ip} has {len(timestamps)} timestamps in state.")
-
-    # We need at least (BEACON_MIN_EVENTS + 1) timestamps to get BEACON_MIN_EVENTS intervals
-    min_timestamps = config.BEACON_MIN_EVENTS + 1
-    if len(timestamps) >= min_timestamps:
-        # Calculate intervals
-        intervals = []
-        for i in range(1, len(timestamps)):
-            intervals.append(timestamps[i] - timestamps[i-1])
-
-        # Calculate average interval
-        avg_interval = sum(intervals) / len(intervals)
-
-        # Check if all intervals are within tolerance
-        beaconing = True
-        for interval in intervals:
-            if abs(interval - avg_interval) > config.BEACON_TOLERANCE:
-                beaconing = False
-                break
-
-        utils.debug_log(f"[Beacon Check] Intervals: {[round(x, 2) for x in intervals]}, Avg: {round(avg_interval, 2)}s, Beaconing: {beaconing}")
-        beacon_score = min(100, (70 + (len(intervals)-config.BEACON_MIN_EVENTS)/config.BEACON_MIN_EVENTS) * 30)
-        if beaconing:
-            # Clear state to avoid double alerts on subsequent packets
-            beacon_state[key] = []
-            return {
-                "attack_type": "Beacon Detection",
-                "severity": "MEDIUM",
-                "detectedAt": format_epoch(ts),
-                "source_ip": src_ip,
-                "destination_ip": dst_ip,
-                "protocol":"HTTPS(TLS)",
-                "description": f"Periodic beaconing pattern detected from {src_ip} to {dst_ip}.",
-                "evidence": f"Avg Interval: {round(avg_interval, 2)}s across {len(intervals)} intervals. Tolerance: ±{config.BEACON_TOLERANCE}s",
-                "recommendation": "Inspect process running on source IP for Command & Control (C2) agents."
-            }
-    return None
+    key = (src, dst, record.get("dst_port", 0))
+    events = beacon_state[key]
+    events.append(ts)
+    while events and ts - events[0] > config.BEACON_WINDOW:
+        events.popleft()
+    if len(events) < config.BEACON_MIN_EVENTS + 1:
+        return None
+    intervals = [events[i] - events[i - 1] for i in range(1, len(events))]
+    if any(interval <= 0 for interval in intervals):
+        return None
+    average = sum(intervals) / len(intervals)
+    jitter = max(abs(interval - average) for interval in intervals)
+    if jitter > config.BEACON_TOLERANCE or not _cooldown_ready("beacon", key, ts):
+        return None
+    return _alert(
+        "Beacon Detection", "MEDIUM", ts, src, dst, record.get("protocol", "TCP"),
+        f"Regular repeated connections from {src} to {dst} resemble beaconing.",
+        f"Intervals: {[round(value, 2) for value in intervals]}; average: {average:.2f}s; "
+        f"jitter: {jitter:.2f}s; tolerance: {config.BEACON_TOLERANCE}s; score: "
+        f"{min(100, 70 + len(intervals) * 5)} / 100",
+        "Inspect the source process, destination reputation, and DNS history for C2 indicators.",
+    )
 
 
 def detect_data_exfiltration(record):
-    """
-    THREAT 4: Data Exfiltration
-    Detects unusually large outbound transfers based on static size or deviation from history.
-    """
-    src_ip = record.get("src_ip")
-    orig_bytes = record.get("orig_bytes", 0)
-    ts = record.get("timestamp")
-    if not src_ip or not ts:
+    """Detect large uploads and source-level upload anomalies."""
+    src, dst, ts = (record.get("src_ip"), record.get("dst_ip", "Unknown"),
+                    _timestamp(record))
+    if not src or ts is None:
         return None
-
-    # Static Threshold Check (High Alert)
-    if orig_bytes > config.UPLOAD_STATIC_THRESHOLD:
-        utils.debug_log(f"[Exfil Check] IP {src_ip} exceeded static threshold: {orig_bytes} bytes (Static: {config.UPLOAD_STATIC_THRESHOLD})")
-        # Save to history
-        exfil_state[src_ip].append(orig_bytes)
-        return {
-            "attack_type": "Data Exfiltration (Static)",
-            "severity": "HIGH",
-            "detectedAt": format_epoch(ts),
-            "source_ip": src_ip,
-            "destination_ip": record.get("dst_ip", "Unknown"),
-            "protocol":"HTTPS(TLS)",
-            "description": f"IP {src_ip} uploaded a massive payload exceeding the static threshold.",
-            "evidence": f"Uploaded: {orig_bytes} bytes (Static Threshold: {config.UPLOAD_STATIC_THRESHOLD} bytes)",
-            "recommendation": "Isolate the host immediately. Check files transferred."
-        }
-
-    # Historical Anomaly Check
-    history = exfil_state[src_ip]
-    alert_triggered = None
-
-    # We require a history of at least 5 connections to build an average
-    if len(history) >= 5:
-        avg_bytes = sum(history) / len(history)
-        threshold = avg_bytes * config.UPLOAD_HISTORICAL_MULTIPLIER
-
-        utils.debug_log(f"[Exfil Check] IP {src_ip} uploaded {orig_bytes} bytes (Hist Avg: {round(avg_bytes, 1)} bytes, Multiplier Threshold: {round(threshold, 1)})")
-
-        # Check anomaly
-        if avg_bytes > 0 and orig_bytes > threshold:
-            ratio = round(orig_bytes / avg_bytes, 2)
-            alert_triggered = {
-                "attack_type": "Data Exfiltration (Anomaly)",
-                "severity": "HIGH",
-                "detectedAt": format_epoch(ts),
-                "source_ip": src_ip,
-                "destination_ip": record.get("dst_ip", "Unknown"),
-                "protocol":"HTTPS(TLS)",
-                "description": f"IP {src_ip} uploaded {orig_bytes} bytes, which is {ratio}x its historical average.",
-                "evidence": f"Uploaded: {orig_bytes} bytes, Avg: {round(avg_bytes, 1)} bytes, Ratio: {ratio}x (Threshold: {config.UPLOAD_HISTORICAL_MULTIPLIER}x)",
-                "recommendation": "Inspect connection payload and destination IP reputation."
-            }
-
-    # Update history (keep last 50 entries to save memory)
-    history.append(orig_bytes)
-    if len(history) > 50:
-        exfil_state[src_ip] = history[-50:]
-
-    return alert_triggered
+    try:
+        uploaded = max(0, int(record.get("orig_bytes", 0)))
+    except (TypeError, ValueError):
+        return None
+    history = exfil_state[src]
+    average = sum(history) / len(history) if history else 0
+    ratio = uploaded / average if average else 0
+    is_static = uploaded >= config.UPLOAD_STATIC_THRESHOLD
+    is_anomaly = (len(history) >= config.EXFIL_MIN_HISTORY and average > 0 and
+                  ratio >= config.UPLOAD_HISTORICAL_MULTIPLIER)
+    history.append(uploaded)
+    if not (is_static or is_anomaly) or not _cooldown_ready("exfil", (src, dst), ts):
+        return None
+    reason = "static upload threshold" if is_static else "historical upload anomaly"
+    return _alert(
+        "Data Exfiltration", "HIGH", ts, src, dst, record.get("protocol", "TCP"),
+        f"Outbound upload from {src} exceeded the {reason} evidence threshold.",
+        f"Uploaded: {uploaded} bytes; historical average: {average:.1f} bytes; "
+        f"ratio: {ratio:.2f}x; static threshold: {config.UPLOAD_STATIC_THRESHOLD}; "
+        f"multiplier: {config.UPLOAD_HISTORICAL_MULTIPLIER}x",
+        "Review the destination and transferred data, then isolate the host if the transfer is unauthorized.",
+    )
 
 
 def detect_weak_tls(record):
-    """
-    THREAT 5: Weak TLS Detection (analyzes ssl.log parsed dictionaries)
-    Detects outdated protocol versions (SSLv3, TLS1.0, TLS1.1) and weak/unsecure cipher suites.
-    """
-    version = record.get("version", "").strip().upper()
-    cipher = record.get("cipher", "").strip().upper()
-    server_name = record.get("server_name", "Unknown")
-    ts = record.get("timestamp")
-
-    if not ts:
+    """Detect old TLS versions or weak cipher names present in Zeek ssl.log."""
+    version = str(record.get("version", "")).strip().upper()
+    cipher = str(record.get("cipher", "")).strip().upper()
+    ts = _timestamp(record)
+    if ts is None:
         return None
+    weak_versions = {"SSLV3", "TLSV10", "TLSV11", "TLS1.0", "TLS1.1"}
+    weak_cipher_keywords = ("NULL", "RC4", "3DES", "DES-", "_DES", "MD5", "EXPORT", "ANON")
+    weak_version = version in weak_versions or any(item in version for item in ("SSLV3", "TLSV10", "TLSV11"))
+    weak_cipher = bool(cipher) and any(keyword in cipher for keyword in weak_cipher_keywords)
+    key = (record.get("src_ip"), record.get("dst_ip"), version, cipher)
+    if not (weak_version or weak_cipher) or not _cooldown_ready("weak_tls", key, ts):
+        return None
+    reasons = []
+    if weak_version:
+        reasons.append(f"protocol={version}")
+    if weak_cipher:
+        reasons.append(f"cipher={cipher}")
+    return _alert(
+        "Weak TLS Negotiation", "MEDIUM", ts, record.get("src_ip", "Unknown"),
+        record.get("dst_ip", "Unknown"), "TLS",
+        "TLS negotiation used a protocol or cipher marked weak by policy.",
+        "; ".join(reasons),
+        "Require TLS 1.2 or newer and disable legacy cipher suites where possible.",
+    )
 
-    # Weak TLS versions
-    weak_versions = ["SSLV3", "TLSV10", "TLSV11"]
 
-    # Weak cipher substring keywords
-    weak_cipher_keywords = [
-        "NULL", "RC4", "3DES", "anon", "DES", "MD5", "EXPORT"
-    ]
-
-    is_weak_version = any(wv in version for wv in weak_versions)
-    is_weak_cipher = any(wc in cipher for wc in weak_cipher_keywords) if cipher else False
-
-    utils.debug_log(f"[Weak TLS Check] Version: '{version}' (Weak? {is_weak_version}), Cipher: '{cipher}' (Weak? {is_weak_cipher})")
-
-    if is_weak_version or is_weak_cipher:
-        reason_list = []
-        if is_weak_version:
-            reason_list.append(f"Outdated Protocol ({version})")
-        if is_weak_cipher:
-            reason_list.append(f"Insecure Cipher ({cipher})")
-
-        evidence = " & ".join(reason_list)
-        return {
-            "attack_type": "Weak TLS Negotiation",
-            "severity": "MEDIUM",
-            "detectedAt": format_epoch(ts),
-            "source_ip": record.get("src_ip", "Unknown"),
-            "destination_ip": record.get("dst_ip", "Unknown"),
-            "protocol":"HTTPS(TLS)",
-            "description": f"Negotiated connection to server '{server_name}' using insecure SSL/TLS parameters.",
-            "evidence": f"Evidence: {evidence}",
-            "recommendation": "Configure client/server to require TLS 1.2+ and disable weak cipher suites."
-        }
-    return None
+def _is_failed(record):
+    return str(record.get("conn_state", "")).upper() in config.FAILED_CONN_STATES
 
 
 def detect_failed_connections(record):
-    """
-    THREAT 6: Suspicious Failed Connections
-    Detects one IP creating many failed connections (S0, REJ, RSTO, RSTOS0).
-    """
-    src_ip = record.get("src_ip")
-    conn_state = record.get("conn_state")
-    ts = record.get("timestamp")
-    if not src_ip or not conn_state or not ts:
+    """Detect a source-level spike in Zeek failed connection states."""
+    src, ts = record.get("src_ip"), _timestamp(record)
+    if not src or ts is None or not _is_failed(record):
         return None
-
-    # Failed states specified by requirement
-    failed_states = {"S0", "REJ", "RSTO", "RSTOS0"}
-    if conn_state not in failed_states:
+    events = failed_conn_state[src]
+    events.append((ts, record.get("dst_ip", ""), record.get("dst_port", 0)))
+    _prune(events, ts, config.FAILED_CONN_WINDOW)
+    count = len(events)
+    if count < config.FAILED_CONN_THRESHOLD or not _cooldown_ready("failed", src, ts):
         return None
-
-    failed_conn_state[src_ip].append(ts)
-
-    # Clean up older than window
-    cutoff = ts - config.FAILED_CONN_WINDOW
-    failed_conn_state[src_ip] = [t for t in failed_conn_state[src_ip] if t >= cutoff]
-    failed_count = len(failed_conn_state[src_ip])
-
-    utils.debug_log(f"[Failed Conn Check] IP {src_ip} has {failed_count} failed connections in last {config.FAILED_CONN_WINDOW}s (Threshold: {config.FAILED_CONN_THRESHOLD})")
-
-    if failed_count > config.FAILED_CONN_THRESHOLD:
-        failed_conn_state[src_ip] = []  # Clear to avoid storm
-        return {
-            "attack_type": "Failed Connection Spike",
-            "severity": "MEDIUM",
-            "detectedAt": format_epoch(ts),
-            "source_ip": src_ip,
-            "destination_ip": record.get("dst_ip", "Multiple"),
-            "protocol":"TCP",
-            "description": f"IP {src_ip} generated {failed_count} failed connections in {config.FAILED_CONN_WINDOW} seconds.",
-            "evidence": f"Failed Connection Count: {failed_count} (Threshold: {config.FAILED_CONN_THRESHOLD})",
-            "recommendation": "Investigate source IP for network scanning or brute force activity."
-        }
-    return None
+    return _alert(
+        "Failed Connection Spike", "MEDIUM", ts, src, "Multiple", record.get("protocol", "TCP"),
+        f"{src} generated a spike of failed network connections.",
+        f"Failed connections: {count}; states: {sorted(config.FAILED_CONN_STATES)}; "
+        f"threshold: {config.FAILED_CONN_THRESHOLD} in {config.FAILED_CONN_WINDOW}s; "
+        f"score: {_count_score(count, config.FAILED_CONN_THRESHOLD)} / 100",
+        "Investigate for scanning or repeated service access and apply rate limiting as appropriate.",
+    )
 
 
 def detect_connection_flood(record):
-    """
-    THREAT 7: Connection Flood
-    Detects high volume of extremely short-lived connections.
-    """
-    src_ip = record.get("src_ip")
-    duration = record.get("duration", 0.0)
-    ts = record.get("timestamp")
-    if not src_ip or not ts:
+    """Detect a high rate of short-lived connections."""
+    src, ts = record.get("src_ip"), _timestamp(record)
+    if not src or ts is None:
         return None
-
-    # Check if connection is short-lived
+    try:
+        duration = float(record.get("duration", 0.0))
+    except (TypeError, ValueError):
+        return None
     if duration >= config.FLOOD_DURATION_THRESHOLD:
         return None
+    events = flood_state[src]
+    events.append((ts, record.get("dst_ip", ""), _is_failed(record)))
+    _prune(events, ts, config.FLOOD_WINDOW)
+    count = len(events)
+    failed = sum(1 for item in events if item[2])
+    if count < config.FLOOD_THRESHOLD or not _cooldown_ready("flood", src, ts):
+        return None
+    return _alert(
+        "Connection Flood", "HIGH", ts, src, "Multiple", record.get("protocol", "TCP"),
+        f"{src} created many short-lived connections in a rolling window.",
+        f"Short-lived connections: {count}; failed states: {failed}; duration threshold: "
+        f"{config.FLOOD_DURATION_THRESHOLD}s; threshold: {config.FLOOD_THRESHOLD} "
+        f"in {config.FLOOD_WINDOW}s; score: {_count_score(count, config.FLOOD_THRESHOLD)} / 100",
+        "Rate-limit the source and investigate whether the traffic targets a service under stress.",
+    )
 
-    flood_state[src_ip].append(ts)
 
-    # Clean up older than window
-    cutoff = ts - config.FLOOD_WINDOW
-    flood_state[src_ip] = [t for t in flood_state[src_ip] if t >= cutoff]
-    flood_count = len(flood_state[src_ip])
+def detect_ssh_bruteforce(record):
+    """Detect repeated SSH attempts; never asserts password failure."""
+    src, dst, ts = record.get("src_ip"), record.get("dst_ip"), _timestamp(record)
+    try:
+        is_ssh = int(record.get("dst_port")) == 22 or str(record.get("service", "")).lower() == "ssh"
+    except (TypeError, ValueError):
+        is_ssh = str(record.get("service", "")).lower() == "ssh"
+    if not src or not dst or ts is None or not is_ssh:
+        return None
+    events = ssh_state[(src, dst)]
+    events.append((ts, _is_failed(record)))
+    _prune(events, ts, config.SSH_WINDOW)
+    attempts = len(events)
+    failed = sum(1 for item in events if item[1])
+    if attempts < config.SSH_ATTEMPT_THRESHOLD or not _cooldown_ready("ssh", (src, dst), ts):
+        return None
+    return _alert(
+        "SSH Brute Force / Repeated Attempts", "HIGH", ts, src, dst, "TCP",
+        f"Repeated SSH connection attempts from {src} to {dst} were observed.",
+        f"SSH attempts: {attempts}; attempts with Zeek failed states: {failed}; "
+        f"threshold: {config.SSH_ATTEMPT_THRESHOLD} in {config.SSH_WINDOW}s. "
+        "This is network evidence and does not prove password failures.",
+        "Verify account activity on the SSH host and apply SSH rate limits or source restrictions.",
+    )
 
-    utils.debug_log(f"[Conn Flood Check] IP {src_ip} has {flood_count} rapid short connections in last {config.FLOOD_WINDOW}s (Threshold: {config.FLOOD_THRESHOLD})")
 
-    if flood_count > config.FLOOD_THRESHOLD:
-        flood_state[src_ip] = []  # Clear state
-        return {
-            "attack_type": "Connection Flood",
-            "severity": "HIGH",
-            "detectedAt": format_epoch(ts),
-            "source_ip": src_ip,
-            "destination_ip": record.get("dst_ip", "Multiple"),
-            "protocol":"TCP",
-            "description": f"IP {src_ip} initiated {flood_count} connection floods of duration < {config.FLOOD_DURATION_THRESHOLD}s in {config.FLOOD_WINDOW} seconds.",
-            "evidence": f"Short-lived Connections: {flood_count} (Threshold: {config.FLOOD_THRESHOLD})",
-            "recommendation": "Block source IP and investigate for application layer DoS attacks."
-        }
-    return None
+def detect_connection_burst(record):
+    """Detect repeated suspicious connections to one endpoint and port."""
+    src, dst, ts = record.get("src_ip"), record.get("dst_ip"), _timestamp(record)
+    if not src or not dst or ts is None:
+        return None
+    try:
+        duration = float(record.get("duration", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    suspicious = _is_failed(record) or duration < config.BURST_SHORT_DURATION
+    if not suspicious:
+        return None
+    key = (src, dst, record.get("dst_port", 0))
+    events = burst_state[key]
+    events.append(ts)
+    _prune(events, ts, config.BURST_WINDOW)
+    count = len(events)
+    if count < config.BURST_THRESHOLD or not _cooldown_ready("burst", key, ts):
+        return None
+    return _alert(
+        "Suspicious Connection Burst", "MEDIUM", ts, src, dst, record.get("protocol", "TCP"),
+        f"Repeated short-lived or failed connections from {src} to {dst} were observed.",
+        f"Suspicious connections: {count}; threshold: {config.BURST_THRESHOLD} in "
+        f"{config.BURST_WINDOW}s; destination port: {record.get('dst_port')}; score: "
+        f"{_count_score(count, config.BURST_THRESHOLD)} / 100",
+        "Review the target service and source process; rate-limit if the pattern is unauthorized.",
+    )
 
-import ipaddress
+
+def detect_service_port_abuse(record):
+    """Detect repeated failed sensitive-port access or service/port mismatch."""
+    src, dst, ts = record.get("src_ip"), record.get("dst_ip"), _timestamp(record)
+    if not src or not dst or ts is None:
+        return None
+    try:
+        port = int(record.get("dst_port"))
+    except (TypeError, ValueError):
+        return None
+    service = str(record.get("service", "")).lower()
+    expected = config.SERVICE_PORTS.get(service)
+    mismatch = bool(service and expected and port not in expected)
+    sensitive = port in config.SENSITIVE_SERVICE_PORTS
+    key = (src, dst, port)
+    if not (mismatch or (sensitive and _is_failed(record))):
+        return None
+    events = service_abuse_state[key]
+    events.append((ts, mismatch, _is_failed(record)))
+    _prune(events, ts, config.SERVICE_ABUSE_WINDOW)
+    mismatches = sum(1 for item in events if item[1])
+    failed = sum(1 for item in events if item[2])
+    enough = (mismatches >= config.SERVICE_MISMATCH_THRESHOLD if mismatch
+              else failed >= config.SERVICE_ABUSE_THRESHOLD)
+    if not enough or not _cooldown_ready("service_abuse", key, ts):
+        return None
+    detail = (f"service={service}, observed_port={port}, expected_ports={expected}"
+              if mismatch else f"failed attempts={failed}, sensitive_port={port}")
+    return _alert(
+        "Service/Port Abuse", "MEDIUM", ts, src, dst, record.get("protocol", "TCP"),
+        f"Repeated suspicious access to a service port was observed from {src}.",
+        f"{detail}; threshold window: {config.SERVICE_ABUSE_WINDOW}s; score: "
+        f"{_count_score(max(mismatches, failed), config.SERVICE_ABUSE_THRESHOLD)} / 100",
+        "Confirm the service is expected on that port and restrict or rate-limit unauthorized access.",
+    )
+
 
 def detect_ip_spoofing(record):
-    """
-    IP Spoofing Detection (Heuristic)
-
-    NOTE:
-    Zeek conn.log cannot reliably detect IP spoofing because it does not
-    contain ARP, MAC addresses, TTL, routing or interface information.
-
-    Therefore this detector only flags obvious invalid or suspicious
-    source addresses.
-    """
-
-    src_ip = record.get("src_ip")
-    dst_ip = record.get("dst_ip")
-    ts = record.get("timestamp")
-
-    if not src_ip or not dst_ip or not ts:
+    """Flag only obvious invalid source addresses; this is explicitly heuristic."""
+    src, dst, ts = record.get("src_ip"), record.get("dst_ip"), _timestamp(record)
+    if not src or not dst or ts is None:
         return None
-
     try:
-        src = ipaddress.ip_address(src_ip)
-        dst = ipaddress.ip_address(dst_ip)
-
+        source = ipaddress.ip_address(src)
+        destination = ipaddress.ip_address(dst)
     except ValueError:
-
-        return {
-            "attack_type": "IP Spoofing (Heuristic)",
-            "severity": "LOW",
-            "detectedAt": format_epoch(ts),
-            "source_ip": src_ip,
-            "destination_ip": dst_ip,
-            "protocol":"UDP",
-            "description": "Malformed IP address detected.",
-            "evidence": f"Source IP '{src_ip}' is not a valid IPv4 or IPv6 address.",
-            "recommendation": "Inspect packet capture for malformed traffic."
-        }
-
-    # =====================================================
-    # IPv4 Checks
-    # =====================================================
-
-    if isinstance(src, ipaddress.IPv4Address):
-
-        # 0.0.0.0
-        if src == ipaddress.IPv4Address("0.0.0.0"):
-
-            reason = "Source IP is 0.0.0.0"
-
-        # 255.255.255.255
-        elif src == ipaddress.IPv4Address("255.255.255.255"):
-
-            reason = "Broadcast address used as source"
-
-        # Multicast used as source
-        elif src.is_multicast:
-
-            reason = "Multicast address used as source"
-
-        # Loopback communicating externally
-        elif src.is_loopback and not dst.is_loopback:
-
-            reason = "Loopback address communicating externally"
-
-        else:
-            return None
-
-    # =====================================================
-    # IPv6 Checks
-    # =====================================================
-
+        reason = f"Source IP '{src}' is not a valid IP address."
     else:
-
-        # Ignore completely normal IPv6 traffic
-        if (
-            src.is_link_local or
-            src.is_loopback or
-            src.is_multicast or
-            src.is_private
-        ):
-            return None
-
-        # Unspecified ::
-        if src == ipaddress.IPv6Address("::"):
-
-            reason = "IPv6 unspecified address used as source"
-
-        else:
-            # Most IPv6 addresses are perfectly valid.
-            # Do not generate false positives.
-            return None
-
-    # =====================================================
-    # Alert
-    # =====================================================
-
-    return {
-        "attack_type": "IP Spoofing (Heuristic)",
-        "severity": "MEDIUM",
-        "detectedAt": format_epoch(ts),
-        "source_ip": src_ip,
-        "destination_ip": dst_ip,
-        "protocol":"UDP",
-        "description": reason,
-        "evidence": (
-            "Zeek conn.log provides only Layer-3 metadata. "
-            "Detection is heuristic and cannot confirm spoofing without "
-            "ARP/MAC/interface information."
-        ),
-        "recommendation": (
-            "Verify ARP tables, DHCP logs, switch CAM tables, "
-            "or firewall/router logs to confirm spoofing."
-        )
-    }
+        reason = None
+        if source.version == 4:
+            if source.is_unspecified:
+                reason = "Unspecified IPv4 address used as source (0.0.0.0)."
+            elif source == ipaddress.IPv4Address("255.255.255.255") or source.is_multicast:
+                reason = "Broadcast or multicast IPv4 address used as source."
+            elif source.is_loopback and not destination.is_loopback:
+                reason = "Loopback IPv4 address communicating with a non-loopback destination."
+        elif source.is_unspecified:
+            reason = "Unspecified IPv6 address used as source (::)."
+    if reason is None or not _cooldown_ready("spoof", src, ts):
+        return None
+    return _alert(
+        "IP Spoofing (Heuristic)", "MEDIUM", ts, src, dst, record.get("protocol", "Unknown"),
+        reason,
+        "Zeek conn.log lacks ARP/MAC/TTL/interface data, so this is a heuristic and cannot confirm spoofing.",
+        "Validate with ARP/DHCP, switch CAM, routing, or packet-capture evidence before blocking.",
+    )

@@ -49,6 +49,11 @@ def monitor_conn():
             if alert:
                 alerts.append(alert)
 
+            # Network scan and repeated-attempt detectors
+            alert = detectors.detect_horizontal_port_scan(record)
+            if alert:
+                alerts.append(alert)
+
             # 3. Beacon Detection
             alert = detectors.detect_beacon(record)
             if alert:
@@ -61,6 +66,18 @@ def monitor_conn():
 
             # 6. Suspicious Failed Connections
             alert = detectors.detect_failed_connections(record)
+            if alert:
+                alerts.append(alert)
+
+            alert = detectors.detect_ssh_bruteforce(record)
+            if alert:
+                alerts.append(alert)
+
+            alert = detectors.detect_connection_burst(record)
+            if alert:
+                alerts.append(alert)
+
+            alert = detectors.detect_service_port_abuse(record)
             if alert:
                 alerts.append(alert)
 
@@ -97,8 +114,12 @@ def monitor_conn():
                     if a.get("attack_type") in [
                         "DDoS Attack",
                         "Port Scan",
+                        "Horizontal Port Scan",
+                        "Vertical Port Scan",
                         "Connection Flood",
-                        "IP Spoofing (Heuristic Check)",
+                        "IP Spoofing (Heuristic)",
+                        "Failed Connection Spike",
+                        "SSH Brute Force / Repeated Attempts",
                     ]:
 
                         print("[DEBUG] Calling block_ip()")
